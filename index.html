@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Пункты OZON со скидкой — карта</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
+<style>
+html,body{height:100%;margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#1c2330}
+#map{position:absolute;inset:0}
+#bar{position:absolute;z-index:1000;top:10px;left:10px;right:10px;max-width:400px;background:#fff;border-radius:12px;box-shadow:0 2px 14px rgba(0,0,0,.25);padding:10px}
+#q{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #c5ccd8;border-radius:8px;font-size:16px}
+.row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center}
+.chip{display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:16px;border:2px solid;font-size:14px;cursor:pointer;user-select:none;background:#fff}
+.chip.off{opacity:.4}
+.dot{width:11px;height:11px;border-radius:50%}
+#near{margin-left:auto;border:0;background:#eef1f6;border-radius:16px;padding:7px 12px;font-size:14px;cursor:pointer}
+#cnt{font-size:13px;color:#5b6577;margin-top:6px}
+.pin{width:30px;height:30px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center}
+.pin b{transform:rotate(45deg);color:#fff;font-size:14px}
+.pin.no{opacity:.55}
+.pp{width:260px}
+.ph{font-weight:700;font-size:15px}
+.pa{margin:3px 0;font-size:14px}
+.pt{font-size:13px;color:#5b6577}
+.pp img{width:100%;min-height:70px;background:#f0f2f5;border:1px solid #d9dee6;border-radius:8px;margin-top:8px;display:block}
+.ok{color:#1b7a3a;font-size:13px;margin-top:4px}
+.warn{color:#b3541a;font-size:13px;margin-top:4px}
+.btn{display:block;text-align:center;padding:9px;margin-top:8px;border-radius:8px;background:#1f5fbf;color:#fff!important;text-decoration:none;font-size:14px}
+.btn.s{background:#eef1f6;color:#1c2330!important}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="bar">
+  <input id="q" type="search" placeholder="Поиск по улице или дому">
+  <div class="row" id="chips"></div>
+  <div class="row"><button id="near">Рядом со мной</button></div>
+  <div id="cnt"></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+<script>
+// ===== НАСТРОЙКА: вставьте ссылку на опубликованный CSV листа «Карта» =====
+var CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSxFroqR_iJLLgjx4jmd6E8jgM-NCofmGzjALUZG6u5B75frN-xD25cP-tfmU2np-uGhZB6CzHCC0U2/pub?gid=1420052462&single=true&output=csv';
+
+var IPS = {
+  'Хорин':  {color: '#1f5fbf', letter: 'Х', terms: '+35% к оплате'},
+  'Пензин': {color: '#e8730c', letter: 'П', terms: '+35% и +5%'}
+};
+
+var today = new Date().toLocaleDateString('sv-SE');
+var map = L.map('map').setView([59.93, 30.32], 10);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19, attribution: '© OpenStreetMap'}).addTo(map);
+var cluster = L.markerClusterGroup({showCoverageOnHover: false, maxClusterRadius: 40}).addTo(map);
+var items = [], active = {};
+var cnt = document.getElementById('cnt');
+
+function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
+function num(v) { return parseFloat(String(v).replace(',', '.')); }
+function fmt(iso) { var p = String(iso).split('-'); return p.length === 3 ? p[2] + '.' + p[1] + '.' + p[0] : iso; }
+
+function parseCSV(t) {
+  var rows = [], r = [], c = '', q = false;
+  for (var i = 0; i < t.length; i++) {
+    var ch = t[i];
+    if (q) { if (ch === '"') { if (t[i + 1] === '"') { c += '"'; i++; } else q = false; } else c += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === ',') { r.push(c); c = ''; }
+    else if (ch === '\n') { r.push(c); rows.push(r); r = []; c = ''; }
+    else if (ch !== '\r') c += ch;
+  }
+  if (c || r.length) { r.push(c); rows.push(r); }
+  return rows;
+}
+
+function popup(d, lat, lon) {
+  var ip = IPS[d['ИП']] || {color: '#555', terms: ''};
+  var h = '<div class="pp"><div class="ph" style="color:' + ip.color + '">ИП ' + esc(d['ИП']) + '</div>';
+  h += '<div class="pa">' + esc(d['Адрес']) + '</div>';
+  if (ip.terms) h += '<div class="pt">Условия: ' + esc(ip.terms) + '</div>';
+  if (d['Файл']) {
+    var id = encodeURIComponent(d['Файл']);
+    var view = 'https://drive.google.com/file/d/' + id + '/view';
+    var fresh = d['Дата'] === today;
+    h += '<a href="' + view + '" target="_blank" rel="noopener"><img src="https://drive.google.com/thumbnail?id=' + id + '&sz=w800" loading="lazy" alt="Накладная" onerror="this.style.display=\'none\'"></a>';
+    h += '<div class="' + (fresh ? 'ok' : 'warn') + '">Накладная за ' + fmt(d['Дата']) + (fresh ? '' : ' — не за сегодня') + '</div>';
+    h += '<a class="btn" href="' + view + '" target="_blank" rel="noopener">Открыть накладную</a>';
+  } else h += '<div class="warn">Накладная пока не загружена</div>';
+  h += '<a class="btn s" href="https://yandex.ru/maps/?rtext=~' + lat + ',' + lon + '&rtt=auto" target="_blank" rel="noopener">Построить маршрут</a></div>';
+  return h;
+}
+
+function build(rows) {
+  var head = rows[0], seen = {};
+  rows.slice(1).forEach(function (r) {
+    var d = {};
+    head.forEach(function (k, i) { d[k.trim()] = (r[i] || '').trim(); });
+    var lat = num(d.lat), lon = num(d.lon);
+    if (isNaN(lat) || isNaN(lon) || !IPS[d['ИП']]) return;
+    var k = lat.toFixed(4) + ',' + lon.toFixed(4), n = seen[k] = (seen[k] || 0) + 1;
+    var ip = IPS[d['ИП']], fresh = d['Файл'] && d['Дата'] === today;
+    var icon = L.divIcon({
+      className: '', iconSize: [30, 30], iconAnchor: [15, 36], popupAnchor: [0, -34],
+      html: '<div class="pin' + (fresh ? '' : ' no') + '" style="background:' + ip.color + '"><b>' + ip.letter + '</b></div>'
+    });
+    var m = L.marker([lat + (n - 1) * 0.00012, lon + (n - 1) * 0.00012], {icon: icon});
+    m.bindPopup(popup(d, lat, lon), {maxWidth: 280});
+    items.push({m: m, ip: d['ИП'], text: (d['Адрес'] + ' ' + d['Код']).toLowerCase()});
+  });
+}
+
+function render(fit) {
+  var q = document.getElementById('q').value.trim().toLowerCase();
+  var shown = items.filter(function (it) { return active[it.ip] && (!q || it.text.indexOf(q) >= 0); });
+  cluster.clearLayers();
+  cluster.addLayers(shown.map(function (it) { return it.m; }));
+  cnt.textContent = 'Показано пунктов: ' + shown.length + ' из ' + items.length;
+  if (fit && shown.length) map.fitBounds(L.featureGroup(shown.map(function (it) { return it.m; })).getBounds().pad(0.15), {maxZoom: 16});
+}
+
+var chips = document.getElementById('chips');
+Object.keys(IPS).forEach(function (name) {
+  active[name] = true;
+  var c = document.createElement('div');
+  c.className = 'chip'; c.style.borderColor = IPS[name].color;
+  c.innerHTML = '<span class="dot" style="background:' + IPS[name].color + '"></span>ИП ' + name;
+  c.onclick = function () { active[name] = !active[name]; c.classList.toggle('off', !active[name]); render(false); };
+  chips.appendChild(c);
+});
+document.getElementById('q').oninput = function () { render(true); };
+
+var me;
+document.getElementById('near').onclick = function () {
+  map.locate({setView: true, maxZoom: 14});
+};
+map.on('locationfound', function (e) {
+  if (me) me.remove();
+  me = L.circleMarker(e.latlng, {radius: 8, color: '#fff', weight: 2, fillColor: '#2a7de1', fillOpacity: 1}).addTo(map);
+});
+map.on('locationerror', function () { alert('Не удалось определить местоположение. Разрешите доступ к геолокации в браузере.'); });
+
+if (CSV_URL.indexOf('http') !== 0) {
+  cnt.textContent = 'Не указана ссылка на таблицу: откройте index.html и вставьте её в CSV_URL.';
+} else {
+  fetch(CSV_URL + (CSV_URL.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now())
+    .then(function (r) { return r.text(); })
+    .then(function (t) { build(parseCSV(t)); render(true); })
+    .catch(function () { cnt.textContent = 'Не удалось загрузить данные. Проверьте, что лист опубликован в интернете.'; });
+}
+</script>
+</body>
+</html>
