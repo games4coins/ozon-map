@@ -25,7 +25,12 @@ html,body{height:100%;margin:0;font-family:system-ui,-apple-system,"Segoe UI",Ro
 .ph{font-weight:700;font-size:15px}
 .pa{margin:3px 0;font-size:14px}
 .pt{font-size:13px;color:#5b6577}
-.pp img{width:100%;min-height:70px;background:#f0f2f5;border:1px solid #d9dee6;border-radius:8px;margin-top:8px;display:block}
+.inv{max-height:260px;overflow:auto;margin-top:8px}
+.inv details{border:1px solid #d9dee6;border-radius:8px;margin-bottom:6px}
+.inv summary{padding:8px 10px;cursor:pointer;font-size:14px}
+.inv .in{padding:0 8px 8px}
+.tag{color:#1b7a3a;font-size:12px;margin-left:6px}
+.pp img{width:100%;min-height:70px;background:#f0f2f5;border-radius:6px;display:block}
 .ok{color:#1b7a3a;font-size:13px;margin-top:4px}
 .warn{color:#b3541a;font-size:13px;margin-top:4px}
 .btn{display:block;text-align:center;padding:9px;margin-top:8px;border-radius:8px;background:#1f5fbf;color:#fff!important;text-decoration:none;font-size:14px}
@@ -76,18 +81,24 @@ function parseCSV(t) {
   return rows;
 }
 
+function parseFiles(s) {
+  return String(s || '').split('|').filter(Boolean).map(function (x) { var p = x.split(':'); return {d: p[0], id: p[1]}; }).filter(function (f) { return f.id; });
+}
+
 function popup(d, lat, lon) {
   var ip = IPS[d['ИП']] || {color: '#555', terms: ''};
   var h = '<div class="pp"><div class="ph" style="color:' + ip.color + '">ИП ' + esc(d['ИП']) + '</div>';
   h += '<div class="pa">' + esc(d['Адрес']) + '</div>';
   if (ip.terms) h += '<div class="pt">Условия: ' + esc(ip.terms) + '</div>';
-  if (d['Файл']) {
-    var id = encodeURIComponent(d['Файл']);
-    var view = 'https://drive.google.com/file/d/' + id + '/view';
-    var fresh = d['Дата'] === today;
-    h += '<a href="' + view + '" target="_blank" rel="noopener"><img src="https://drive.google.com/thumbnail?id=' + id + '&sz=w800" loading="lazy" alt="Накладная" onerror="this.style.display=\'none\'"></a>';
-    h += '<div class="' + (fresh ? 'ok' : 'warn') + '">Накладная за ' + fmt(d['Дата']) + (fresh ? '' : ' — не за сегодня') + '</div>';
-    h += '<a class="btn" href="' + view + '" target="_blank" rel="noopener">Открыть накладную</a>';
+  var fl = parseFiles(d['Файлы']);
+  if (fl.length) {
+    var fresh0 = fl[0].d === today;
+    h += '<div class="' + (fresh0 ? 'ok' : 'warn') + '">' + (fresh0 ? 'Есть накладная за сегодня' : 'Последняя накладная за ' + fmt(fl[0].d) + ' — не за сегодня') + '</div><div class="inv">';
+    fl.forEach(function (f, i) {
+      var id = encodeURIComponent(f.id), view = 'https://drive.google.com/file/d/' + id + '/view';
+      h += '<details' + (i === 0 ? ' open' : '') + '><summary>' + fmt(f.d) + (f.d === today ? '<span class="tag">сегодня</span>' : '') + '</summary><div class="in"><a href="' + view + '" target="_blank" rel="noopener"><img data-src="https://drive.google.com/thumbnail?id=' + id + '&sz=w800" alt="Накладная"></a><a class="btn" href="' + view + '" target="_blank" rel="noopener">Открыть в полном размере</a></div></details>';
+    });
+    h += '</div>';
   } else h += '<div class="warn">Накладная пока не загружена</div>';
   h += '<a class="btn s" href="https://yandex.ru/maps/?rtext=~' + lat + ',' + lon + '&rtt=auto" target="_blank" rel="noopener">Построить маршрут</a></div>';
   return h;
@@ -101,7 +112,7 @@ function build(rows) {
     var lat = num(d.lat), lon = num(d.lon);
     if (isNaN(lat) || isNaN(lon) || !IPS[d['ИП']]) return;
     var k = lat.toFixed(4) + ',' + lon.toFixed(4), n = seen[k] = (seen[k] || 0) + 1;
-    var ip = IPS[d['ИП']], fresh = d['Файл'] && d['Дата'] === today;
+    var ip = IPS[d['ИП']], fresh = d['Файлы'] && d['Дата'] === today;
     var icon = L.divIcon({
       className: '', iconSize: [30, 30], iconAnchor: [15, 36], popupAnchor: [0, -34],
       html: '<div class="pin' + (fresh ? '' : ' no') + '" style="background:' + ip.color + '"><b>' + ip.letter + '</b></div>'
@@ -131,6 +142,16 @@ Object.keys(IPS).forEach(function (name) {
   chips.appendChild(c);
 });
 document.getElementById('q').oninput = function () { render(true); };
+
+map.on('popupopen', function (e) {
+  e.popup.getElement().querySelectorAll('details').forEach(function (det) {
+    function load() {
+      var im = det.querySelector('img');
+      if (det.open && !im.getAttribute('src')) { im.onload = function () { e.popup.update(); }; im.src = im.dataset.src; }
+    }
+    det.addEventListener('toggle', load); load();
+  });
+});
 
 var me;
 document.getElementById('near').onclick = function () {
