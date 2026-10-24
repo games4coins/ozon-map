@@ -30,6 +30,8 @@ html,body{height:100%;margin:0;font-family:system-ui,-apple-system,"Segoe UI",Ro
 .inv summary{padding:8px 10px;cursor:pointer;font-size:14px}
 .inv .in{padding:0 8px 8px}
 .tag{color:#1b7a3a;font-size:12px;margin-left:6px}
+.in img{margin-top:6px}
+.lnk{display:block;text-align:center;font-size:13px;margin:4px 0 8px;color:#1f5fbf}
 .pp img{width:100%;min-height:70px;background:#f0f2f5;border-radius:6px;display:block}
 .ok{color:#1b7a3a;font-size:13px;margin-top:4px}
 .warn{color:#b3541a;font-size:13px;margin-top:4px}
@@ -92,11 +94,17 @@ function popup(d, lat, lon) {
   if (ip.terms) h += '<div class="pt">Условия: ' + esc(ip.terms) + '</div>';
   var fl = parseFiles(d['Файлы']);
   if (fl.length) {
-    var fresh0 = fl[0].d === today;
-    h += '<div class="' + (fresh0 ? 'ok' : 'warn') + '">' + (fresh0 ? 'Есть накладная за сегодня' : 'Последняя накладная за ' + fmt(fl[0].d) + ' — не за сегодня') + '</div><div class="inv">';
-    fl.forEach(function (f, i) {
-      var id = encodeURIComponent(f.id), view = 'https://drive.google.com/file/d/' + id + '/view';
-      h += '<details' + (i === 0 ? ' open' : '') + '><summary>' + fmt(f.d) + (f.d === today ? '<span class="tag">сегодня</span>' : '') + '</summary><div class="in"><a href="' + view + '" target="_blank" rel="noopener"><img data-src="https://drive.google.com/thumbnail?id=' + id + '&sz=w800" alt="Накладная"></a><a class="btn" href="' + view + '" target="_blank" rel="noopener">Открыть в полном размере</a></div></details>';
+    var gr = [];
+    fl.forEach(function (f) { var g = gr[gr.length - 1]; if (g && g.d === f.d) g.ids.push(f.id); else gr.push({d: f.d, ids: [f.id]}); });
+    var fresh0 = gr[0].d === today;
+    h += '<div class="' + (fresh0 ? 'ok' : 'warn') + '">' + (fresh0 ? 'Есть накладная за сегодня' : 'Последняя накладная за ' + fmt(gr[0].d) + ' — не за сегодня') + '</div><div class="inv">';
+    gr.forEach(function (g, i) {
+      h += '<details' + (i === 0 ? ' open' : '') + '><summary>' + fmt(g.d) + (g.d === today ? '<span class="tag">сегодня</span>' : '') + (g.ids.length > 1 ? ' (' + g.ids.length + ' шт.)' : '') + '</summary><div class="in">';
+      g.ids.forEach(function (id0, j) {
+        var id = encodeURIComponent(id0), view = 'https://drive.google.com/file/d/' + id + '/view';
+        h += '<a href="' + view + '" target="_blank" rel="noopener"><img data-id="' + id + '" alt="Накладная"></a><a class="lnk" href="' + view + '" target="_blank" rel="noopener">' + (g.ids.length > 1 ? 'Открыть ' + (j + 1) + ' из ' + g.ids.length : 'Открыть в полном размере') + '</a>';
+      });
+      h += '</div></details>';
     });
     h += '</div>';
   } else h += '<div class="warn">Накладная пока не загружена</div>';
@@ -146,8 +154,23 @@ document.getElementById('q').oninput = function () { render(true); };
 map.on('popupopen', function (e) {
   e.popup.getElement().querySelectorAll('details').forEach(function (det) {
     function load() {
-      var im = det.querySelector('img');
-      if (det.open && !im.getAttribute('src')) { im.onload = function () { e.popup.update(); }; im.src = im.dataset.src; }
+      if (!det.open) return;
+      det.querySelectorAll('img').forEach(function (im) {
+        if (im.dataset.s) return;
+        im.dataset.s = 1;
+        var id = im.dataset.id, k = 0;
+        var tries = ['https://lh3.googleusercontent.com/d/' + id + '=w900', 'https://drive.google.com/thumbnail?id=' + id + '&sz=w900'];
+        im.referrerPolicy = 'no-referrer';
+        im.onload = function () { e.popup.update(); };
+        im.onerror = function () {
+          if (++k < tries.length) { im.src = tries[k]; return; }
+          im.onerror = null;
+          var w = document.createElement('div');
+          w.className = 'warn'; w.textContent = 'Предпросмотр недоступен. Нажмите «Открыть».';
+          im.replaceWith(w); e.popup.update();
+        };
+        im.src = tries[0];
+      });
     }
     det.addEventListener('toggle', load); load();
   });
